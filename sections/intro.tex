@@ -1,12 +1,98 @@
 \section{实验要求}
 \subsection{数据预处理：分词}
-
+从原始的小说文本中，抽取与人物互动相关的数据，屏蔽掉与人物关系无关的文本内容，为后面基于人物共现的分析做准备。\\
+\textbf{输入}：1. 金庸全本武侠小说文集（未分词）；2. 金庸武侠小说人名列表。\\
+\textbf{输出}：分词后，仅保留人名的武侠小说全集。
 \subsection{特征提取：单词同现}
+在人物同现分析中，如果两个人在原文的同一段落中出现，则认为两个人发生了一次同现关系。需要对人物之间的同现关系次数进行统计，同现关系次数越多，则说明两人关系越密切。\\
+\textbf{输入}：分词后仅保留人名的武侠小说全集。\\
+\textbf{输出}：在金庸的所有武侠小说中，人物之间的同现次数。
 \subsection{归一化}
+获得人物之间的同现次数后，根据同现关系生成人物之间的关系图。在关系图中，人物是顶点，人物之间的互动关系是边。边的权值是两个人之间的共现概率。\\
+\textbf{输入}：人物共现次数矩阵。\\
+\textbf{输出}：权重归一化后的人物关系图。
 \subsection{PageRank}
+获得权重归一化化后的人物关系图后，可以进行数据分析任务。PageRan是典型的数据分析任务，通过PageRank可以确定金庸武侠江湖中的“主角”是那些。\\
+\textbf{输入}：权重归一化后的人物关系图。
+\\\textbf{输出}：人物的PageRank值。
 \subsection{标签传播}
+标签传播（Label Propagation）是一种半监督的图分析算法，他能为图上的顶点打上标签，进行图顶点的聚类分析。通过在人物关系图上进行标签传播，可以将属于同一本书的人物聚为一类。\\
+\textbf{输入}：权重归一化后的人物关系图。\\
+\textbf{输出}：人物的标签信息。
 \subsection{输出整理}
-
+对于PageRank的结果，可以使用MapReduce任务按照PageRank值进行全局排序。\\
+对于标签传播的结果，可以使用MapReduce任务将属于同一标签的任务输出到一起，便于结果查看。
 \section{小组分工}
+\begin{table}[!htbp]
+	\centering
+	\caption{小组分工}
+	\begin{tabular} {|p{50pt}|p{80pt}|p{250pt}|}
+		\hline
+		姓名& 学号 &任务\\
+		\hline
+		朱庭纬&161220186&数据预处理，特征提取，归一化，报告撰写\\
+		\hline
+		崔子寒&161220026&PageRank，结果整理，报告撰写\\
+		\hline
+		吴昌容&161220134&标签传播任务，结果整理，报告撰写\\
+		\hline
+	\end{tabular}
+\end{table}
 \section{实验环境}
-\section{运行方式}
+\begin{table}[!htbp]
+	\centering
+	\caption{实验环境}
+	\begin{tabular} {|p{80pt}|p{160pt}|}
+		\hline
+		操作系统&Ubuntu 18.04 LTS\\
+		\hline
+		hadoop版本& 2.7.1\\
+		\hline
+		jdk版本& 1.7.0\\
+		\hline
+		构建工具&Maven\\
+		\hline
+	\end{tabular}
+\end{table}
+\section{编译、打包、运行}
+\subsection{编译打包}
+由于使用Maven作为构建工具，所以可以很方便的添加依赖，我们在pom.xml文件中添加了表3所示的依赖:
+\begin{table}[!htbp]
+	\centering
+	\caption{项目依赖}
+	\begin{tabular} {|p{90pt}|p{250pt}|p{50pt}|}
+		\hline
+		groupId& artifactId &version\\
+		\hline
+		org.apache.hadoop&hadoop-mapreduce-client-core&2.6.0\\
+		\hline
+		org.apache.hadoop&hadoop-test&1.2.1\\
+		\hline
+		org.apache.hadoop&hadoop-common&2.7.1\\
+		\hline
+		org.ansj&ansj\_seg&5.1.6\\
+		\hline
+	\end{tabular}
+\end{table}
+\\
+其中，groupId为org.apache.hadoop的三个依赖是hadoop MapReduce API的有关依赖。ansj\_seg是分词库的依赖，这里使用的是官网上最新的5.1.6版本。\\
+为了在打包时将第三方的依赖和代码一起打包，使用Maven插件org.apache.maven.plugins: maven-shade-plugin，通过设置目标为shade，可以将依赖连同代码一起打包。打包的命令为：\textbf{mvn package -Dhttps.protocols=TLSv1.2}。 由于我们使用的jdk版本是1.7，而1.7默认的https协议是TLSv1.1，现在maven仓库已经不再支持这个版本的协议，所以需要加上参数，否则在下载依赖时会出错。
+\subsection{运行方式}
+任务代码由三名成员合作编写，每人负责一个模块，然后将模块组合起来。运行时既可以通过运行主类Main，依次运行所有任务，也可以分别运行某一个子任务。具体的运行方式如表4所示(假设jar包名称为jianghu.jar)：
+\begin{table}[!htbp]
+	\centering
+	\caption{运行方式}
+	\begin{tabular} {|p{180pt}|p{300pt}|}
+		\hline
+		指令&解释\\
+		\hline
+		hadoop jar jianghu.jar cn.nju.st13.Main arg0 arg1 arg2&arg0：小说文件夹路径；arg1：人名文件路径；arg2：输出结果路径\\
+		\hline
+		hadoop jar  jianghu.jar  cn.nju.st13.preprocess.Preprocess arg0 arg1 arg2 arg3&arg0：小说文件夹路径；arg1：人名文件路径；arg2：人物关系图输出路径；arg3：可选参数"-1","-2","-3",代表三种不同的方法\\
+		\hline
+		hadoop jar jianghu.jar cn.nju.st13.pagerank.PageRankDriver arg0 arg1 可选参数&arg0：人物关系图路径；arg1：排序处理后的PageRank结果路径；可选参数：-max\_iter=n(n为最大迭代次数，默认15)，-retain\_process=false/true(是否保留中间结果，默认false)\\
+		\hline
+		hadoop jar jianghu.jar cn.nju.st13.labelprop.LabelProp arg0 arg1&arg0：人物关系图路径；arg1：整理后的标签传播算法结果路径。\\
+		\hline
+	\end{tabular}
+\end{table}
