@@ -62,12 +62,23 @@
 	\begin{center}\large#1\end{center}
 	\vskip0.5em}%
 }
+
+%算法包
+\usepackage{caption}
+\usepackage{algorithm,float}
+\usepackage{algorithmic}
+%算法input output
+\renewcommand{\algorithmicrequire}{\textbf{Input:}} % Use Input in the format of Algorithm
+\renewcommand{\algorithmicensure}{\textbf{Output:}} % Use Output in the format of Algorithm
+\DeclareMathOperator*{\argminA}{arg\,min} % Jan Hlavacek
+
 \begin{document}
 \title{MapReduce 课程设计：金庸的江湖}
 \subtitle{   \ \ \ \ ——分析小说中人物关系}
 \author{朱庭纬，崔子寒，吴昌容}
 \maketitle
 \tableofcontents
+\input{sections/abstract.tex}
 \input{sections/intro.tex}
 \section{算法介绍}
 \input{sections/algorithm/task1.tex}
