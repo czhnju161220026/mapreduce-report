@@ -1,1 +1,37 @@
 \subsection{任务5}
+
+\subsubsection{算法描述}
+第五个任务即为对图上的顶点进行聚类分析，从而在金庸武侠小说的人物关系图中完成社区发现。
+可以完成社区发现（Community Detection）的图算法有很多种，其中标签传播（Label Propagation）正是一种运行高效、易于实现的常用选择。
+标签传播算法采用迭代计算，其核心思想是：在每一轮迭代中，一个顶点的类别标签变为其相邻顶点中出现频率最高的顶点类的标签；
+当迭代计算满足一定的停止条件（如：所有顶点的标签不再改变；每一个顶点的标签均为相邻顶点中出现频率最高的标签；已达到指定的迭代轮数）后，停止迭代，此时拥有相同类别标签的顶点即被认为属于同一类别。
+该算法的时间复杂度为$O(n+km)$，其中$n$和$m$分别为图中顶点的数目和边的数目，而$k$为迭代轮数。
+由于通常迭代超过5轮时，$95\%$的点就已经收敛，所以迭代轮数$k$不需要随着$n$和$m$的增加而显著增加，即$k$基本保持为常数，可见该算法的计算速度非常快。
+原始的标签传播算法假设每一条边的权重均相同，而在本次实验中边的权重是可能会不相同的，所以在每一轮迭代中决定顶点的新标签时应该使用标签的局部权重值（即目标顶点与所有带有该标签的相邻点之间的边权值之和）而不是频率值。
+此外，由于在分布式计算中检查顶点的标签是否保持不变比较麻烦，所以在本次实验中我们采用指定迭代轮数来作为迭代计算的停止条件。
+改动后的标签传播算法的伪代码描述如下：
+\begin{algorithm}[H]
+    \caption{Label Propagation($X,Y$)}
+    \begin{algorithmic}[1]
+        \REQUIRE 顶点集$X$，带权邻接表$Y$，迭代轮数$k$
+        \ENSURE 顶点标签集$C(x) x \in X$
+        \STATE $C(x, 0) := x, x \in X$
+        \STATE $t := 1$
+        \FOR {$t < k$:}
+        \STATE 将顶点集$X$中的点随机排序
+        \FOR {$x \in X$:}
+        \STATE $N :=$ $Y$中$x$对应的表项，即$x$的邻接点链表
+        \STATE $KVMap := \{label \rightarrow weight\}$ 标签到权重的键值映射表，每个键的值均初始化为0
+        \STATE 从$N$中随机去除一项（Random Break Ties）
+        \FOR {$item \in N$:}
+        \STATE $KVMap[C(item.node, t-1)] = KVMap[C(item.node, t-1)] + item.weight$
+        \ENDFOR
+        \STATE $C(x, t) =$ $KVMap$中值最大的键，即权重最大的标签
+        \ENDFOR
+        \STATE $t = t + 1$
+        \ENDFOR
+        \RETURN $C(x, k)$
+    \end{algorithmic}
+\end{algorithm}
+
+\subsubsection{算法并行化设计}
