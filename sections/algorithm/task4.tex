@@ -1,1 +1,177 @@
-\subsection{任务4}
+\newpage
+
+\subsection{PageRank}
+\subsubsection{输入输出格式}
+PageRank任务的输入是人物关系图，输出是按照PageRank值从大到小排序的<人名，PageRank值>键值对。算法的输入为归一化后的人物关系图，输入文件具有如下的格式：
+\begin{center}
+	\fbox{\shortstack[l]{丁同\ 	李三,0.250000|李文秀,0.500000|老头子,0.125000|霍元龙,0.125000 \\
+			乔福\ 	汉子,0.062500|小凤,0.312500|张无忌,0.500000|朱九真,0.125000 \\
+			九死生\ 	百草仙,0.200000|韩无垢,0.200000|黄蓉,0.200000|张一氓,0.200000|人厨子,0.200000}}
+\end{center}
+其中每一行的键是人名，后面是该人物所有的邻居和对应的出边权值。输出文件具有如下格式：
+\begin{center}
+	\fbox{\shortstack[l]{韦小宝	0.027058917763952448\\
+			令狐冲	0.01603786999665175\\
+			张无忌	0.015589415048158133
+		}}
+\end{center}
+\subsubsection{任务流程}
+算法的大致流程描述如下：
+\begin{enumerate}
+	\item 初始化图结构，为每个人物分配初始的PageRank值。假设有$n$个人物，那么每个人物的PageRank值为$\frac{1}{n}$。
+	\item 迭代计算每个人物的PageRank值。为了防止出现rank leak和rank sink问题，使用随机游走模型。但是和一般的随机游走模型不同的是，我们按照出边的权值分配传递PageRank值，而不是平均分配。用$W_{ij}$表示边$e_{ij}$的权值，$M(p_i)$表示指向$p_i$的节点的集合，那么PageRank值的更新公式如下：
+	\[
+		PR(p_i) = \frac{1-d}{N} + d \sum_{p_j \in M(p_i)} W_{ji} \times PR(p_j)
+	\]
+	其中，$d$为阻尼系数，常用的值为0.85。
+	\item 结果整理：经过若干轮迭代，最终得到了每个人物和对应的PR值，但是还要对结果进行整理。通过一个MapReduce任务，从最后一轮迭代的结果中读取人物和对应的PR值，使用PR值作为键，并重载它的比较函数，最终得到按照PR值从大到小排序的输出
+\end{enumerate}
+从PageRank算法的步骤可以看出，大致需要3个MapReduce任务（实际操作中，统计人物个数$n$也用到了一个MapReduce任务，但是由于比较简单，所以不详细叙述该步骤）。分别为PageInitializer,PageIter,PageViewer。这三个MapReduce任务对应上述的三个步骤。最终我们用一个Driver将三个任务包装在一起运行，接下来依次介绍这三个任务的具体操作。
+
+\subsubsection{PageInitializer}
+这一步比较简单，由于特征归一化已经为建立起了人物关系图，所以只需要初始化每个人物结点的PR值为$\frac{1}{n}$即可。初始化在Map阶段进行，Reduce阶段不需要进行任何处理，直接输出结果即可。Map阶段的伪代码如下：
+\begin{algorithm}[H]
+	\caption{PageInitializerMap($name,neighbors,n$)}
+	\begin{algorithmic}[1]
+		\REQUIRE 人物姓名$name$，邻居表$neighbors$，人物个数$n$
+		\ENSURE 初始化了$PR$的结点信息
+		\STATE $Emit(name, <\frac{1}{n}, neighbors>)$
+	\end{algorithmic}
+\end{algorithm}
+Reduce阶段什么事情都不做，只要直接输出Map的结果即可。
+
+\subsubsection{PageIter}
+这一步是Page任务中最难的一步。在Map阶段，需要按照边的权值，将$PR$值分发给邻居结点，同时也要传递图结构，以便在输出中保留图结构，供下次迭代时使用。在Reduce阶段，需要按照随机游走模型，计算新的$PR$值，连同图结构一起输出。算法的伪代码如下：
+\begin{algorithm}[H]
+	\caption{PageIterMap($name,<PR,neighbors>$)}
+	\begin{algorithmic}[1]
+		\REQUIRE 人物姓名$name$，PR值,邻居表
+		\ENSURE 图结构和分发的$PR$值
+		\FOR{$<neighbor,weight>$ in $neighbors$ }
+		\STATE $Emit(neighbor, PR\times weight)$
+		\ENDFOR
+		\STATE $Emit(name, neighbors)$
+	\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+	\caption{PageIterReduce($name,[p_1,p_2...p_m],n$)}
+	\begin{algorithmic}[1]
+		\REQUIRE 人物姓名$name$，$Map$的输出
+		\ENSURE 迭代后的结果
+		\STATE $PR$:=0
+		\STATE $sum$:=0
+		\STATE $neighbors$:=$\emptyset$
+		\FOR{$i:=1$ to $m$}
+		\IF{$p_i$ is value}
+		\STATE $sum := sum + p_i$
+		\ELSE
+		\STATE $neighbors:=p_i$
+		\ENDIF
+		\ENDFOR
+		\STATE $PR:= \frac{1-d}{n} + d \times sum$
+		\STATE $Emit(name, <PR, neighbors>)$
+	\end{algorithmic}
+\end{algorithm}
+解释：在Map阶段，对于当前人物的每一个邻居，进行一次$Emit$，将当前人物的$PR$值按照边权值进行分发。最后再进行一次$Emit$，传递图结构。在Reduce阶段，重建图结构，计算$PR$值。可以看出，Reduce阶段的输出格式和Map阶段的输入格式完全相同，这确保了算法是可以迭代进行的。
+
+\subsubsection{PageViewer}
+这一阶段可以借助MapReduce框架中的shuffle阶段来完成。只需要重载$PR$值类型的比较器，然后将$PR$值作为键，人名作为值，使用MapReduce任务直接输出即可。
+
+\subsubsection{实现细节}
+PageInitializer任务是比较好实现的，不涉及复杂的处理。比较关键的部分是PageIter。这个子任务的难点在于如何在MapReduce中同时传递PR值和图结构。因为hadoop框架中，规定了值只能是同一种类型，所以我们自定义了一个数据结构PageRankElement，它既可以是值，也可以是图结构，它的具体实现如下：
+\begin{lstlisting}[language=Java]
+public class PageRankElement implements Writable {
+	//如果isNode是True, 那么传递的是图结构，content是所有的邻居
+	//如果isNode是False，那么传递的是pagerank值
+	private boolean isNode;
+	private String content;
+	private double passValue;
+
+	@Override
+	public void write(DataOutput dataOutput) throws IOException {
+		dataOutput.writeBoolean(isNode);
+		dataOutput.writeUTF(content);
+		dataOutput.writeDouble(passValue);
+	}
+
+	@Override
+	public void readFields(DataInput dataInput) throws IOException {
+		isNode = dataInput.readBoolean();
+		content = dataInput.readUTF();
+		passValue = dataInput.readDouble();
+	}
+	//constructor,getter and setter
+	//...
+}
+\end{lstlisting}
+在PageRankElement类中，我们覆写wirte和readFields方法，以确保我们的数据结构可以被序列化和反序列化，从而在集群中传播。通过一个boolean型变量，可以判断传递的是值还是结点。\\
+使用自定义数据结构的好处是，提高了代码的可读性：虽然可以通过在字符串中添加标志位等方法来实现相同的功能，但是那样写出来的代码可读性不好，使用自定义的数据结构可以将判断，处理的步骤包装成成员函数。通过getter和setter来读写内容，使代码简单易懂。以下是PageIter的部分代码：\\
+\newpage
+\begin{lstlisting}[language=Java]
+//Mapper类
+public static class PageRankIterMapper extends Mapper<Object, Text, Text, PageRankElement> {
+	@Override
+	public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+		...
+		//传递图结构
+		context.write(new Text(nodeName), new PageRankElement(neighbours.toString()));
+		//分发PR值
+		for (int i = 0; i < length - 1; i++) {
+			String[] nameAndWeight = tokens[i].split("[,]");
+			String neighbourName = nameAndWeight[0];
+			double weight = Double.parseDouble(nameAndWeight[1]);
+			context.write(new Text(neighbourName), new PageRankElement(weight * prValue));
+	}
+}
+
+//Reducer类
+public static class PageRankIterReducer extends Reducer<Text, PageRankElement, Text, Text> {
+	@Override
+	public void reduce(Text key, Iterable<PageRankElement> values, Context context) throws IOException, InterruptedException{
+		String neighbours = null;
+		double newPrValue = 0.0;
+		double d = Double.parseDouble(context.getConfiguration().get("d"));
+		double num = Double.parseDouble(context.getConfiguration().get("num"));
+		for (PageRankElement element : values) {
+			if (element.isNode()) {
+				neighbours = element.getContent();
+			} else {
+				newPrValue += d * element.getPassValue();
+			}
+		}
+		newPrValue += (1 - d) * (1 / num);
+		context.write(key, new Text(neighbours + "PR," + Double.toString(newPrValue)));
+	}
+}
+\end{lstlisting}
+\newpage
+PageViewer任务是从最后一次迭代的结果中读出人名和$PR$值，然后按照$PR$值从大到小排序输出。在hadoop 框架中，结果会按照Map的key进行排序。所以只要将$PR$值作为key，将人名作为val即可。但是默认的排序是从小到大排序，而我们更关注$PR$值较大的人物。所以重写$PR$值的比较器。除了重写比较器，还需要重写构造器和toString方法。
+\begin{lstlisting}[language=Java]
+class DecDoubleWritable extends DoubleWritable {
+	@Override
+	public int compareTo(DoubleWritable o) {
+		return -super.compareTo(o);
+	}
+	public DecDoubleWritable(double val) {
+		super(val);
+	}
+	public DecDoubleWritable() {
+		super();
+	}
+	@Override
+	public String toString() {
+		return super.toString();
+	}
+}
+\end{lstlisting}
+
+重载比较器后，只要在Map阶段将$PR$值作为键，人名作为值输出即可。在Reduce阶段，将键和值调换顺序输出即可。最终通过一个Driver将三个子任务封装起来，在Driver中也可以根据参数控制迭代次数等。
+
+
+
+
+
+
+
+
