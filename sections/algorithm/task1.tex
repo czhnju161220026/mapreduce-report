@@ -1,1 +1,26 @@
 \subsection{任务1}
+首先我们需要从原始文本中把文章中所有的人名抽取出来，屏蔽掉其他与人物关系分析任务无关的内容。要完成此任务有两个步骤：将段落分割成词语，再从所有词语中过滤出金庸小说中的人物名字。\\
+\indent 问题的关键在于如何正确分词，使得目标人名能够被正确提取。我们使用的分词工具是Ansj\_seg，在分词前向词典中添加所有自定义词语即可。分词后判断每个词语的词性是否为“nr”（即人名）以及是否在给定的人名列表中即可提取出所有人物名称。\\
+\indent 由于每行的处理方式均相同，仍可采用mapreduce进行并行处理。在mapper端代码中，在setup函数中读取人名列表，将列表中每个人名添加到词典中；在map函数中，对于每一行，将分词结果存入Result类型变量中，然后根据词性和是否在人名列表中判断每个词是否为目标人名。最后将所有目标人名用空格连接并emit。无需Reducer端。\\
+\indent 人名列表是需要全局共享的变量。由于数据量不大，在本任务中，使用 Job 的 Configuration 在 Driver 和 Mapper 端进行数据的传递。在 Driver 端的 main 函数中，从本地的文件中读入人名列表，然后将人名列表转化为一个长字符串。通过 Configuration 的 set 方法，将人名列表信息存入 Configuration 中。再在Mapper端中的setup函数中读取即可。\\
+Mapper端伪代码如下所示：
+\begin{lstlisting}[language=Java]
+WordSegMapper{
+	List<String> nameList;
+	setup(){
+		nameListStr = context.getConfiguration().get("NameList");
+		nameList = nameListStr.split(" ");
+		for name in nameList do:
+			DicLibrary.insert(name);
+	}
+	map(input){
+		terms = parse(input);
+		result = empty;
+		for term in terms do:
+			if term.getNatureStr == "nr" and term is in the nameList:
+				add term to result;
+		key = join all the word in result;
+		emit(key, NullWritable);
+	}
+}
+\end{lstlisting}
