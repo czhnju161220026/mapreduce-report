@@ -1,1 +1,26 @@
 \subsection{任务3}
+预处理的最后一步，我们需要根据人物同现的总次数用邻接表的形式构建起人物关系图，作为下一步pagerank的输入。每行是一个邻接关系，表示与某人物的相连的所有边以及相应的权值。权值为单词共现的频率，即对于一个点所有的邻接点，之间的权值为共现次数占总共现次数的比。\\
+\indent 因此对于上一步人物同现次数的输入，我们需要根据不同人名为划分标准，将与同一个人物有共现关系的人物名称和相应同现次数发送到同一个reducer节点。在reduce函数中，首先计算出所有邻接点的同现总数，然后计算频率即可计算出每条边的权值。\\
+Mapper端的伪代码如下所示：
+\begin{algorithm}[H]
+	\caption{map}
+	\begin{algorithmic}[1]
+		\REQUIRE 共现人名对<name1,name2>, 共现次数n
+		\STATE emit(name1, <name2, n>)
+		\STATE emit(name2, <name1, n>)
+	\end{algorithmic}
+\end{algorithm}
+Reducer端的伪代码如下所示：
+\begin{algorithm}[H]
+	\caption{reduce}
+	\begin{algorithmic}[1]
+		\REQUIRE key:人名name, values:邻接点与共现次数$[<name_1, n_1>, <name_2,n_2>,…,<name_n,n_n>]$
+		\ENSURE key:人名name, value:邻接关系$[<name_1, weight_1>,<name_2，weight_2>,…<name_n,weight_n>]$
+		\STATE $sum:=sum of all the ni$
+		\FOR {i in range(n)}
+		\STATE $weight_i=n_i/sum$
+		\ENDFOR
+		\STATE emit($name, [<name1, weight1>,<name2，weight2>,…<name_n, weight_n>]$)
+	\end{algorithmic}
+\end{algorithm}
+
