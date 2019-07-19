@@ -1,1 +1,32 @@
 \subsection{任务2}
+在上一步提取出所有目标人名之后，这一步我们进行人物同现的统计。本实验中我们认为若两个人物在同一段落共同出现便记为一次同现。\\
+\indent 由于Hadoop默认的数据输入格式TextInputFormat的缺省RecordReader为LineRecordReader，所以人名共现的窗口即为map函数的整个输入。需要注意的是，需要首先对一行的人名列表进行去重。\\
+map端的伪代码如下所示：
+\begin{algorithm}[H]
+	\caption{map}
+	\begin{algorithmic}[1]
+		\REQUIRE 每一段的人名列表$nameList$
+		\ENSURE key:共现人名对<name1, name2>, value:1
+		\STATE nameList $\leftarrow$ unique the nameList //除去重复的人名
+		\FOR {name1 in nameList}
+			\FOR {name2 in nameList} 
+				\IF {name1 != name2}
+					\STATE emit(<name1, name2>, 1)
+				\ENDIF
+			\ENDFOR
+		\ENDFOR
+	\end{algorithmic}
+\end{algorithm}
+reduce端只需做简单的加法即可。
+\begin{algorithm}[H]
+	\caption{reduce}
+	\begin{algorithmic}[1]
+		\REQUIRE key:共现人名对<name1, name2>, values:次数数组
+		\ENSURE key:共现人名对<name1, name2>, value:共现总数
+		\STATE $sum:=0$
+		\FOR {value in values}
+			\STATE $sum += value$
+		\ENDFOR
+		\STATE emit(<name1, name2>, sum)
+	\end{algorithmic}
+\end{algorithm}

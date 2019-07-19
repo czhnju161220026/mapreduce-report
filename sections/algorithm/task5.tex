@@ -1,1 +1,177 @@
-\subsection{任务5}
+\subsection{聚类分析：标签传播算法}
+
+\subsubsection{算法描述}
+第五个任务即为对图上的顶点进行聚类分析，从而在金庸武侠小说的人物关系图中完成社区发现。
+可以完成社区发现（Community Detection）的图算法有很多种，其中标签传播（Label Propagation）正是一种运行高效、易于实现的常用选择。
+标签传播算法采用迭代计算，其核心思想是：在每一轮迭代中，一个顶点的类别标签变为其相邻顶点中出现频率最高的顶点类的标签；
+当迭代计算满足一定的停止条件（如：所有顶点的标签不再改变；每一个顶点的标签均为相邻顶点中出现频率最高的标签；已达到指定的迭代轮数）后，停止迭代，此时拥有相同类别标签的顶点即被认为属于同一类别。
+该算法的时间复杂度为$O(n+km)$，其中$n$和$m$分别为图中顶点的数目和边的数目，而$k$为迭代轮数。
+由于通常迭代超过5轮时，$95\%$的点就已经收敛，所以迭代轮数$k$不需要随着$n$和$m$的增加而显著增加，即$k$基本保持为常数，可见该算法的计算速度非常快。
+\par
+原始的标签传播算法假设每一条边的权重均相同，而在本次实验中边的权重可能是不相同的，所以在每一轮迭代中决定顶点的新标签时应该使用标签的局部权重值（即目标顶点与所有带有该标签的相邻点之间的边权值之和）而不是频率值。
+对于更新方式的问题，我们考虑到如果采用异步更新，由于需要考虑计算顺序，那么多个计算节点在计算顶点的新类别标签时必然会出现对顶点标签集的读写竞争，这就会降低计算的并行度，损害分布式系统的运行效率，
+而且在小说人物图中基本不会出现二分图的结构，无需担心同步更新的震荡问题，所以我们决定采用同步更新。
+此外，由于在分布式迭代计算中检查顶点的标签是否保持不变的计算和存储开销都比较大，所以在本次实验中我们采用预先指定的迭代轮数来作为迭代计算的停止条件。
+最终，我们略加改进的标签传播算法的伪代码描述如下：
+\begin{algorithm}[H]
+    \caption{Label Propagation($X,Y$)}
+    \begin{algorithmic}[1]
+        \REQUIRE 顶点集$X$，带权邻接表$Y$，迭代轮数$k$
+        \ENSURE 顶点标签集$C(x) x \in X$
+        \STATE $C(x, 0) = x, x \in X$
+        \STATE $t = 1$
+        \FOR {$t < k$:}
+        \STATE 将顶点集$X$中的点随机排序
+        \FOR {$x \in X$:}
+        \STATE $N =$ $Y$中$x$对应的表项，即$x$的邻接点链表
+        \STATE $KVMap = \{label \rightarrow weight\}$ //标签到权重的键值映射表，每个键的值均初始化为0
+        \STATE 从$N$中随机去除一项（Random Break Ties）
+        \FOR {$item \in N$:}
+        \STATE $KVMap[C(item.node, t-1)] = KVMap[C(item.node, t-1)] + item.weight$
+        \ENDFOR
+        \STATE $C(x, t) =$ $KVMap$中值最大的键，即权重最大的标签
+        \ENDFOR
+        \STATE $t = t + 1$
+        \ENDFOR
+        \RETURN $C(x, k)$
+    \end{algorithmic}
+\end{algorithm}
+
+\subsubsection{算法并行化设计}
+上节只是对标签传播算法的执行流程做了一个描述，我们要在MapReduce程序中实现这一算法，还需要将其并行化。
+首先，为了初始化迭代计算需要的数据，我们需要使用一组Mapper和Reducer来从任务3的输出中提取出图的邻接表并将每一个顶点的初始标签附到对应的表项上，我们将这一过程命名为initialize。
+然后，在每一轮迭代中，我们需要使用一组Mapper和Reducer来基于初始或前一轮的标签数据和图结构数据计算下一轮的标签数据，我们将这一过程命名为iterate。
+最后，为了满足任务6中关于分析结果整理的需求，我们还需要使用一组Mapper和Reducer来从迭代计算结果中提取人物关系图中的每一个顶点（人物名）及其类别标签，并将同一类别的顶点（一个社区）输出到一起，我们将这一过程命名为cluster。
+\par
+initialize过程使用InitMapper和InitReducer来进行计算，只用执行一次。其输入为任务3输出的人物关系图的邻接表，其输出为每一个顶点均附上一个唯一的类别标签后的邻接表。类别标签位于邻接表项中的人物名之后，边表之前。
+\\ \textbf{initialize过程的输入格式}：node  neighbor1,weight1|neighbor2,weight2|\dots
+\\ \textbf{initialize过程的输出格式}：node  label neighbor1,weight1|neighbor2,weight2|\dots
+\par
+initialize过程的计算逻辑较为简单，其只是为迭代计算准备初始数据。
+(i) 在map阶段中只需解析输入中的字符串，然后根据顶点的人物名来为其生成一个独特的类别标识并与原有的字符串结合后输出即可。
+(ii) 在reduce阶段中则只需直接原封不动地输出键和值即可。
+\\
+\emph{InitMapper和InitReducer的伪代码描述如下：}
+\begin{algorithm}[H]
+    \caption{InitMapper}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Object, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \STATE $itemContent = inputValue.split("\quad|\backslash\backslash t")$ //使用空格和tab切割字符串
+        \STATE $node = itemContent[0]$
+        \STATE $label = itemContent[0].hashCode()$ //使用人物名的哈希编码来作为其初始类别标签
+        \STATE $edgeList = itemContent[1]$
+        \STATE $outputValue = label + “\quad” + edgeList$ //label和edgeList拼接成的字符串，label和edgeList中间用空格分隔）
+        \STATE $emit(node, outputValue)$
+    \end{algorithmic}
+\end{algorithm}
+\begin{algorithm}[H]
+    \caption{InitReducer}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Text, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \FOR {$val \in inputValue$:}
+        \STATE $emit(inputKey, val)$
+        \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+iterate过程使用IterMapper和IterReducer来进行计算，若迭代轮次为$k$，则这个过程总共要执行$k$次。
+第一次执行的输入为initialize过程的输出，此外的每一次执行的输入都为上一次执行的输出，也就是说其输入与输出格式是相同的，且与initialize过程的输出保持一致。
+\\ \textbf{iterate过程的输入格式}：node  label neighbor1,weight1|neighbor2,weight2|\dots
+\\ \textbf{iterate过程的输出格式}：node  label neighbor1,weight1|neighbor2,weight2|\dots
+\par
+iterate过程完成了标签传播算法中最重要的部分——迭代更新每个顶点的类别标签，也是并行化标签传播算法的核心。
+(i) 在map阶段中，对每一个顶点都要解析其邻接表，向每一个邻居点对应的reducer节点发送自己的标签，此外还要将边表数据发送到自身对应的reducer节点。
+(ii) 在reduce阶段中，每一个顶点都要接收来自邻居点的标签数据（带“label ”前缀）和来自自身的边表数据（带“edgeList ”前缀）两种value，并根据这两组数据计算出在该顶点的邻居点中哪一个类别的局部权重最大，这一权重最大的类别即为该顶点的新类别；最后，需要以顶点的人物名为键、以新类别标签和边表数据的组合为值，将结果输出到文件中。
+\\
+\emph{IterMapper和IterReducer的伪代码描述如下：}
+\begin{algorithm}[H]
+    \caption{IterMapper}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Object, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \STATE $itemContent = inputValue.split("\quad |\backslash\backslash t")$ //使用空格和tab切割字符串
+        \STATE $node = itemContent[0]$
+        \STATE $label = itemContent[1]$
+        \STATE $edgeList = itemContent[2].split("\backslash\backslash|")$ //使用‘|’切割字符串
+        \FOR {$edge \in edgeList$:}
+        \STATE $neighbor = edge.split(",")[0]$
+        \STATE $outputValue = "label\quad" + node + "," + label$ //带有“label ”前缀的由node和label拼接而成的字符串
+        \STATE $emit(neighbor, outputValue)$
+        \ENDFOR
+        \STATE $outputValue = "edgeList\quad" + itemContent[2]$ //将itemContent[2]加上“edgeList ”前缀后形成的字符串
+        \STATE $emit(node, outputValue)$
+    \end{algorithmic}
+\end{algorithm}
+\begin{algorithm}[H]
+    \caption{IterReducer}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Text, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \STATE $labelMap = \{node \rightarrow label\}$ //人物名到标签的键值映射表
+        \STATE $weightMap = \{label \rightarrow weight\}$ //标签到权重的键值映射表，每个键的值均初始化为0
+        \STATE $edgeList = \emptyset$ //边表
+        \STATE $edgeListStr = null$ //边表的字符串表示
+        \STATE
+        \FOR {$val \in inputValue$:}
+        \STATE $itemContent = val.split("\quad")$ //使用空格切分字符串
+        \IF {$itemContent[0] = "label"$}
+        \STATE $neighbor = itemContent[1].split(",")[0]$
+        \STATE $neighborLabel = itemContent[1].split(",")[1]$
+        \STATE $labelMap.put(neighbor, neighborLabel)$
+        \ELSIF {$itemContent[0] = "edgeList"$}
+        \STATE $edgeList = itemContent[1].split("\backslash\backslash|")$ //使用‘|’切割字符串
+        \STATE $edgeListStr = itemContent[1]$
+        \ENDIF
+        \STATE
+        \STATE $edgeNum = edgeList.length$
+        \STATE $counter = 0$
+        \STATE $brokenTie =$ 一个随机数（如果$edgeNum$为1，则$brokenTie$设为-1，即不进行randomly break tie）
+        \FOR {$edge \in edgeList$:}
+        \IF {$counter \neq brokenTie$}
+        \STATE $neighbor = edge.split(",")[0]$
+        \STATE $weight = edge.split(",")[1]$
+        \STATE $neighborLabel = labelMap.get(neighbor)$
+        \STATE $weightMap.put(neigborLabel, weightMap.get(neigborLabel) + weight)$
+        \ENDIF
+        \STATE $counter = counter + 1$
+        \ENDFOR
+        \STATE
+        \STATE $maxLabel =$ $weightMap$中value最大的key
+        \STATE $outputValue = maxLabel + edgeListStr$ //由新标签和原边表组成的新邻接表项
+        \STATE $emit(inputKey, outputValue)$
+        \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+cluster过程使用ClusterMapper和ClusterReducer来进行计算，其只需要在程序的最后执行一次。
+该过程的输入为iterate过程的输出，而输出则为人物名和类别标签对的列表，输出文件中的每一行为一个表项，第一个词元为人物名，第二个词元为该人物的类别标签。列表中的人物名是按类别分块排列的，两个类别的表项之间有一个空行用于区隔类别。
+\\ \textbf{cluster过程的输入格式}：node  label neighbor1,weight1|neighbor2,weight2|\dots
+\\ \textbf{cluster过程的输出格式}：node  label
+\par
+cluster过程其实已经不属于标签传播算法本身。在迭代计算完成后，聚类分析就已经完成，cluster过程的目的只是为了整理结果，使其更清晰易读。
+(i) 在map阶段中，只需提取带类别标签的邻接表中的每一个顶点及其标签，并将其输出。
+(ii) 在reduce阶段中，由于每一次reduce执行的inputValue里包含了某一类别的所有顶点，所以只需遍历该value集，并以每一个顶点的人物名为键、该类别的标签为值输出到文件中即可。为了在文件中区隔不同的类别，在每一个类的最后还要输出一个空的键值对以产生一个空行。
+\\
+\emph{ClusterMapper和ClusterReducer的伪代码描述如下：}
+\begin{algorithm}[H]
+    \caption{ClusterMapper}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Object, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \STATE $itemContent = inputValue.split("\quad |\backslash\backslash t")$
+        \STATE $node = itemContent[0]$
+        \STATE $label = itemContent[1]$
+        \STATE $emit(node, label)$
+    \end{algorithmic}
+\end{algorithm}
+\begin{algorithm}[H]
+    \caption{ClusterReducer}
+    \begin{algorithmic}[1]
+        \REQUIRE inputKey: Text, inputValue: Text
+        \ENSURE outputKey: Text, outputValue: Text
+        \FOR {$val \in inputValue$:}
+        \STATE $emit(val, inputKey)$
+        \ENDFOR
+        \STATE $emit(empty$ Text $object, empty$ Text $object)$ //用于产生类别之间的空行
+    \end{algorithmic}
+\end{algorithm}
