@@ -161,7 +161,7 @@ cluster过程其实已经不属于标签传播算法本身。在迭代计算完�
         \STATE $itemContent = inputValue.split("\quad |\backslash\backslash t")$
         \STATE $node = itemContent[0]$
         \STATE $label = itemContent[1]$
-        \STATE $emit(node, label)$
+        \STATE $emit(label, node)$
     \end{algorithmic}
 \end{algorithm}
 \begin{algorithm}[H]
