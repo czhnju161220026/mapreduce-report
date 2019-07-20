@@ -4,6 +4,7 @@
 \indent 由于每行的处理方式均相同，仍可采用mapreduce进行并行处理。在mapper端代码中，在setup函数中读取人名列表，将列表中每个人名添加到词典中；在map函数中，对于每一行，将分词结果存入Result类型变量中，然后根据词性和是否在人名列表中判断每个词是否为目标人名。最后将所有目标人名用空格连接并emit。无需Reducer端。\\
 \indent 人名列表是需要全局共享的变量。由于数据量不大，在本任务中，使用 Job 的 Configuration 在 Driver 和 Mapper 端进行数据的传递。在 Driver 端的 main 函数中，从本地的文件中读入人名列表，然后将人名列表转化为一个长字符串。通过 Configuration 的 set 方法，将人名列表信息存入 Configuration 中。再在Mapper端中的setup函数中读取即可。\\
 Mapper端伪代码如下所示：
+\newpage
 \begin{lstlisting}[language=Java]
 WordSegMapper{
 	List<String> nameList;
